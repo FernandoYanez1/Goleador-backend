@@ -119,14 +119,21 @@ app.post("/apostar", async (req, res) => {
   if (!apostas || !Array.isArray(apostas)) return res.status(400).json({ erro: "Dados inválidos." });
 
   try {
+    // 1. Cria a cartela
     const resultCartela = await pool.query(`INSERT INTO cartelas (usuario_id, rodada_id, status_pagamento) VALUES ($1, $2, 'pendente') RETURNING id`, [usuario_id, rodada_id]);
     const cartela_id = resultCartela.rows[0].id;
     
+    // 2. Prepara a query dos palpites
     const queryPalpite = `INSERT INTO predictions (cartela_id, match_id, palpite_casa, palpite_visitante, pontos_ganhos) VALUES ($1, $2, $3, $4, 0)`;
     
-    for (let aposta of apostas) {
-      await pool.query(queryPalpite, [cartela_id, aposta.match_id, aposta.palpite_casa, aposta.palpite_visitante]);
-    }
+    // 3. O TRUQUE NINJA: Cria um "caminhão" (Promise.all) e manda todos os jogos ao mesmo tempo para o banco
+    const promessas = apostas.map(aposta => 
+      pool.query(queryPalpite, [cartela_id, aposta.match_id, aposta.palpite_casa, aposta.palpite_visitante])
+    );
+    
+    // Aguarda todos os jogos serem salvos simultaneamente
+    await Promise.all(promessas);
+
     res.status(201).json({ mensagem: "Cartela gerada com sucesso!", cartela_id });
   } catch (err) {
     res.status(500).json({ erro: "Erro ao salvar os palpites da cartela." });
