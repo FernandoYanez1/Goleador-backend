@@ -247,12 +247,14 @@ app.post("/finalizar-jogo", async (req, res) => {
 app.get("/ranking", async (req, res) => {
   try {
     const query = `
-      SELECT u.id, u.nome, COALESCE(SUM(p.pontos_ganhos), 0) as pontuacao_total
+      SELECT u.id, u.nome, 
+             COALESCE(SUM(p.pontos_ganhos), 0) as pontuacao_total,
+             COUNT(DISTINCT c.id) as total_cartelas
       FROM users u
-      LEFT JOIN cartelas c ON u.id = c.usuario_id AND c.status_pagamento = 'aprovado'
+      JOIN cartelas c ON u.id = c.usuario_id AND c.status_pagamento = 'aprovado'
       LEFT JOIN predictions p ON c.id = p.cartela_id
       GROUP BY u.id, u.nome
-      ORDER BY pontuacao_total DESC
+      ORDER BY pontuacao_total DESC, total_cartelas DESC
     `;
     const result = await pool.query(query);
     res.status(200).json(result.rows);
