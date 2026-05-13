@@ -71,6 +71,14 @@ app.put("/rodadas/:id/finalizar", (req, res) => {
   });
 });
 
+// Reabrir Rodada (Admin)
+app.put("/rodadas/:id/reabrir", (req, res) => {
+  db.run(`UPDATE rodadas SET status = 'aberta' WHERE id = ?`, [req.params.id], (err) => {
+    if (err) return res.status(500).json({ erro: err.message });
+    res.json({ mensagem: "Rodada reaberta! Apostas liberadas." });
+  });
+});
+
 // Cadastrar jogo vinculado a uma rodada
 app.post("/cadastrar-jogo", (req, res) => {
   const { rodada_id, time_casa, time_visitante, sigla_casa, sigla_visitante, logo_casa, logo_visitante, data_hora } = req.body;
