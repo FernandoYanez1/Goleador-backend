@@ -303,3 +303,17 @@ app.get("/auditoria", (req, res) => {
 app.listen(PORT, () => {
   console.log(`Servidor rodando com sucesso na porta ${PORT}`);
 });
+
+// Excluir Cartela (Admin)
+app.delete("/deletar-cartela/:id", (req, res) => {
+  const { id } = req.params;
+  // Primeiro deleta os palpites vinculados para não dar erro de banco de dados
+  db.run(`DELETE FROM predictions WHERE cartela_id = ?`, [id], (err) => {
+    if (err) return res.status(500).json({ erro: err.message });
+    // Depois deleta a cartela
+    db.run(`DELETE FROM cartelas WHERE id = ?`, [id], (err2) => {
+      if (err2) return res.status(500).json({ erro: err2.message });
+      res.json({ mensagem: "Cartela e palpites excluídos com sucesso!" });
+    });
+  });
+});
