@@ -145,7 +145,7 @@ app.get("/meus-palpites/:usuario_id", async (req, res) => {
     const query = `
       SELECT c.id as cartela_id, c.status_pagamento, c.data_criacao, r.nome as rodada_nome, r.status as rodada_status,
              p.id as palpite_id, p.palpite_casa, p.palpite_visitante, p.pontos_ganhos,
-             m.time_casa, m.time_visitante, m.logo_casa, m.logo_visitante, m.gols_casa, m.gols_visitante
+             m.time_casa, m.time_visitante, m.logo_casa, m.logo_visitante, m.gols_casa, m.gols_visitante, m.data_hora
       FROM cartelas c
       JOIN rodadas r ON c.rodada_id = r.id
       JOIN predictions p ON c.id = p.cartela_id
@@ -167,7 +167,8 @@ app.get("/meus-palpites/:usuario_id", async (req, res) => {
       cartela.total_pontos += (row.pontos_ganhos || 0);
       cartela.palpites.push({
         time_casa: row.time_casa, time_visitante: row.time_visitante, logo_casa: row.logo_casa, logo_visitante: row.logo_visitante,
-        palpite_casa: row.palpite_casa, palpite_visitante: row.palpite_visitante, gols_casa: row.gols_casa, gols_visitante: row.gols_visitante, pontos_ganhos: row.pontos_ganhos
+        palpite_casa: row.palpite_casa, palpite_visitante: row.palpite_visitante, gols_casa: row.gols_casa, gols_visitante: row.gols_visitante, 
+        pontos_ganhos: row.pontos_ganhos, data_hora: row.data_hora // <-- ADICIONADO AQUI
       });
       return acc;
     }, []);
