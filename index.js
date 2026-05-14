@@ -42,8 +42,8 @@ app.post("/login", async (req, res) => {
 // 2. GESTÃO DE RODADAS E JOGOS
 app.post("/rodadas", async (req, res) => {
   try {
-    const result = await pool.query(`INSERT INTO rodadas (nome, status) VALUES ($1, 'aberta') RETURNING id`, [req.body.nome]);
-    res.status(201).json({ mensagem: "Rodada criada!", id: result.rows[0].id });
+    const result = await pool.query(`INSERT INTO rodadas (nome, status) VALUES ($1, 'rascunho') RETURNING id`, [req.body.nome]);
+    res.status(201).json({ mensagem: "Rodada criada como rascunho!", id: result.rows[0].id });
   } catch (err) {
     res.status(500).json({ erro: err.message });
   }
@@ -58,10 +58,10 @@ app.get("/rodadas", async (req, res) => {
   }
 });
 
-app.put("/rodadas/:id/finalizar", async (req, res) => {
+app.put("/rodadas/:id/status", async (req, res) => {
   try {
-    await pool.query(`UPDATE rodadas SET status = 'finalizada' WHERE id = $1`, [req.params.id]);
-    res.json({ mensagem: "Rodada finalizada!" });
+    await pool.query(`UPDATE rodadas SET status = $1 WHERE id = $2`, [req.body.status, req.params.id]);
+    res.json({ mensagem: `Status atualizado para ${req.body.status}!` });
   } catch (err) {
     res.status(500).json({ erro: err.message });
   }
