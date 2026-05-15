@@ -6,6 +6,13 @@ const pool = new Pool({
   ssl: { rejectUnauthorized: false }
 });
 
+// === A MÁGICA PARA O SERVIDOR NÃO CRASHAR ===
+// Se o Neon hibernar e cortar a conexão, o Node.js captura o erro aqui em vez de desligar o servidor
+pool.on('error', (err, client) => {
+  console.error('Erro no banco de dados (Neon dormindo/reiniciando):', err.message);
+});
+// ===========================================
+
 pool.connect((err) => {
   if (err) console.error('Erro ao conectar ao PostgreSQL:', err.stack);
   else console.log('Conectado ao banco de dados PostgreSQL (Neon) com sucesso!');
