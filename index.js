@@ -1,6 +1,7 @@
 const express = require("express");
 const cors = require("cors");
 const pool = require("./database.js");
+const { MercadoPagoConfig, Payment } = require('mercadopago');
 
 const app = express();
 app.use(cors());
@@ -8,9 +9,12 @@ app.use(express.json());
 
 const PORT = process.env.PORT || 3001;
 
+// Configuração do Mercado Pago (Pega o token do ambiente)
+const client = new MercadoPagoConfig({ accessToken: process.env.MP_ACCESS_TOKEN });
+
 // 1. ROTAS BÁSICAS E AUTENTICAÇÃO
 app.get("/", (req, res) => {
-  res.json({ mensagem: "Backend Goleador VIP rodando no PostgreSQL!" });
+  res.json({ mensagem: "Backend Goleador VIP rodando no PostgreSQL com MP!" });
 });
 
 app.post("/cadastro", async (req, res) => {
@@ -67,15 +71,6 @@ app.put("/rodadas/:id/status", async (req, res) => {
   }
 });
 
-app.put("/rodadas/:id/reabrir", async (req, res) => {
-  try {
-    await pool.query(`UPDATE rodadas SET status = 'aberta' WHERE id = $1`, [req.params.id]);
-    res.json({ mensagem: "Rodada reaberta!" });
-  } catch (err) {
-    res.status(500).json({ erro: err.message });
-  }
-});
-
 app.post("/cadastrar-jogo", async (req, res) => {
   const { rodada_id, time_casa, time_visitante, sigla_casa, sigla_visitante, logo_casa, logo_visitante, data_hora } = req.body;
   try {
@@ -113,30 +108,53 @@ app.delete('/deletar-jogo/:id', async (req, res) => {
   }
 });
 
-// 3. CARTELAS E APOSTAS
+// 3. CARTELAS E APOSTAS (AGORA COM PIX AUTOMÁTICO)
 app.post("/apostar", async (req, res) => {
   const { usuario_id, rodada_id, apostas } = req.body;
   if (!apostas || !Array.isArray(apostas)) return res.status(400).json({ erro: "Dados inválidos." });
 
   try {
-    // 1. Cria a cartela
+    // 1. Busca os dados do usuário para mandar pro Mercado Pago
+    const userResult = await pool.query(`SELECT nome, email, cpf FROM users WHERE id = $1`, [usuario_id]);
+    const userData = userResult.rows[0];
+
+    // 2. Cria a cartela
     const resultCartela = await pool.query(`INSERT INTO cartelas (usuario_id, rodada_id, status_pagamento) VALUES ($1, $2, 'pendente') RETURNING id`, [usuario_id, rodada_id]);
     const cartela_id = resultCartela.rows[0].id;
     
-    // 2. Prepara a query dos palpites
+    // 3. Salva os palpites
     const queryPalpite = `INSERT INTO predictions (cartela_id, match_id, palpite_casa, palpite_visitante, pontos_ganhos) VALUES ($1, $2, $3, $4, 0)`;
-    
-    // 3. O TRUQUE NINJA: Cria um "caminhão" (Promise.all) e manda todos os jogos ao mesmo tempo para o banco
-    const promessas = apostas.map(aposta => 
-      pool.query(queryPalpite, [cartela_id, aposta.match_id, aposta.palpite_casa, aposta.palpite_visitante])
-    );
-    
-    // Aguarda todos os jogos serem salvos simultaneamente
+    const promessas = apostas.map(aposta => pool.query(queryPalpite, [cartela_id, aposta.match_id, aposta.palpite_casa, aposta.palpite_visitante]));
     await Promise.all(promessas);
 
-    res.status(201).json({ mensagem: "Cartela gerada com sucesso!", cartela_id });
+    // 4. GERA O PIX NO MERCADO PAGO
+    const payment = new Payment(client);
+    const pixResponse = await payment.create({
+        body: {
+            transaction_amount: 20.00,
+            description: `Cartela #${cartela_id} - Bolão Goleador VIP`,
+            payment_method_id: 'pix',
+            payer: {
+                email: userData.email,
+                first_name: userData.nome,
+                identification: { type: 'CPF', number: userData.cpf || '00000000000' }
+            },
+            external_reference: cartela_id.toString(), // Isso liga o PIX à sua cartela
+            notification_url: `${process.env.BACKEND_URL}/webhook/mercadopago` // A URL que o MP vai fofocar quando pagar
+        }
+    });
+
+    // 5. Devolve para o Front o código copia e cola e o QR Code em imagem
+    res.status(201).json({ 
+        mensagem: "Cartela e PIX gerados com sucesso!", 
+        cartela_id,
+        pix_copia_cola: pixResponse.point_of_interaction.transaction_data.qr_code,
+        qr_code_base64: pixResponse.point_of_interaction.transaction_data.qr_code_base64
+    });
+
   } catch (err) {
-    res.status(500).json({ erro: "Erro ao salvar os palpites da cartela." });
+    console.error(err);
+    res.status(500).json({ erro: "Erro ao gerar a cartela ou PIX." });
   }
 });
 
@@ -168,7 +186,7 @@ app.get("/meus-palpites/:usuario_id", async (req, res) => {
       cartela.palpites.push({
         time_casa: row.time_casa, time_visitante: row.time_visitante, logo_casa: row.logo_casa, logo_visitante: row.logo_visitante,
         palpite_casa: row.palpite_casa, palpite_visitante: row.palpite_visitante, gols_casa: row.gols_casa, gols_visitante: row.gols_visitante, 
-        pontos_ganhos: row.pontos_ganhos, data_hora: row.data_hora // <-- ADICIONADO AQUI
+        pontos_ganhos: row.pontos_ganhos, data_hora: row.data_hora
       });
       return acc;
     }, []);
@@ -179,13 +197,10 @@ app.get("/meus-palpites/:usuario_id", async (req, res) => {
   }
 });
 
-// 4. ADMINISTRAÇÃO E PROCESSAMENTO
+// 4. ADMIN E RESULTADOS
 app.get("/admin/cartelas", async (req, res) => {
   try {
-    const query = `
-      SELECT c.id, c.status_pagamento, c.data_criacao, u.nome as usuario_nome, r.nome as rodada_nome
-      FROM cartelas c JOIN users u ON c.usuario_id = u.id JOIN rodadas r ON c.rodada_id = r.id ORDER BY c.id DESC
-    `;
+    const query = `SELECT c.id, c.status_pagamento, c.data_criacao, u.nome as usuario_nome, r.nome as rodada_nome FROM cartelas c JOIN users u ON c.usuario_id = u.id JOIN rodadas r ON c.rodada_id = r.id ORDER BY c.id DESC`;
     const result = await pool.query(query);
     res.json(result.rows);
   } catch (err) {
@@ -255,14 +270,9 @@ app.post("/finalizar-jogo", async (req, res) => {
 app.get("/ranking", async (req, res) => {
   try {
     const query = `
-      SELECT c.id as cartela_id, c.rodada_id, u.id as usuario_id, u.nome, 
-             COALESCE(SUM(p.pontos_ganhos), 0) as pontuacao_total
-      FROM cartelas c
-      JOIN users u ON c.usuario_id = u.id
-      LEFT JOIN predictions p ON c.id = p.cartela_id
-      WHERE c.status_pagamento = 'aprovado'
-      GROUP BY c.id, c.rodada_id, u.id, u.nome
-      ORDER BY pontuacao_total DESC, c.id ASC
+      SELECT c.id as cartela_id, c.rodada_id, u.id as usuario_id, u.nome, COALESCE(SUM(p.pontos_ganhos), 0) as pontuacao_total
+      FROM cartelas c JOIN users u ON c.usuario_id = u.id LEFT JOIN predictions p ON c.id = p.cartela_id
+      WHERE c.status_pagamento = 'aprovado' GROUP BY c.id, c.rodada_id, u.id, u.nome ORDER BY pontuacao_total DESC, c.id ASC
     `;
     const result = await pool.query(query);
     res.status(200).json(result.rows);
@@ -274,8 +284,7 @@ app.get("/ranking", async (req, res) => {
 app.get("/auditoria", async (req, res) => {
   try {
     const query = `
-      SELECT u.nome as usuario_nome, c.id as cartela_id, c.status_pagamento,
-             m.time_casa, m.time_visitante, p.palpite_casa, p.palpite_visitante
+      SELECT u.nome as usuario_nome, c.id as cartela_id, c.status_pagamento, m.time_casa, m.time_visitante, p.palpite_casa, p.palpite_visitante
       FROM predictions p JOIN cartelas c ON p.cartela_id = c.id JOIN users u ON c.usuario_id = u.id JOIN matches m ON p.match_id = m.id
       ORDER BY u.nome ASC, c.id ASC, m.data_hora ASC
     `;
@@ -286,6 +295,27 @@ app.get("/auditoria", async (req, res) => {
   }
 });
 
+// 5. O WEBHOOK (A MÁGICA DA APROVAÇÃO)
+app.post("/webhook/mercadopago", async (req, res) => {
+  const { action, data } = req.body;
+  
+  if (action === "payment.updated" || action === "payment.created") {
+      try {
+          const paymentId = data.id;
+          const paymentInfo = await new Payment(client).get({ id: paymentId });
+          
+          if (paymentInfo.status === "approved") {
+              const cartelaId = paymentInfo.external_reference;
+              await pool.query(`UPDATE cartelas SET status_pagamento = 'aprovado' WHERE id = $1`, [cartelaId]);
+              console.log(`Cartela #${cartelaId} aprovada via PIX!`);
+          }
+      } catch (err) {
+          console.error("Erro no Webhook do MP:", err);
+      }
+  }
+  res.status(200).send("OK");
+});
+
 app.listen(PORT, () => {
-  console.log(`Servidor rodando com PostgreSQL na porta ${PORT}`);
+  console.log(`Servidor rodando com PostgreSQL e Mercado Pago na porta ${PORT}`);
 });
