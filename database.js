@@ -56,12 +56,13 @@ const initDB = async () => {
       )
     `);
 
-    await pool.query(`
+   await pool.query(`
       CREATE TABLE IF NOT EXISTS cartelas (
         id SERIAL PRIMARY KEY,
         usuario_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
         rodada_id INTEGER NOT NULL REFERENCES rodadas(id) ON DELETE CASCADE,
         status_pagamento VARCHAR(50) DEFAULT 'pendente',
+        metodo_pagamento VARCHAR(50) DEFAULT 'manual',
         data_criacao TIMESTAMP DEFAULT CURRENT_TIMESTAMP
       )
     `);
