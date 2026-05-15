@@ -108,7 +108,7 @@ app.delete('/deletar-jogo/:id', async (req, res) => {
   }
 });
 
-// 3. CARTELAS E APOSTAS (AGORA COM PIX AUTOMÁTICO)
+// 3. CARTELAS E APOSTAS (COM PIX AUTOMÁTICO E ORIGEM MERCADO PAGO)
 app.post("/apostar", async (req, res) => {
   const { usuario_id, rodada_id, apostas } = req.body;
   if (!apostas || !Array.isArray(apostas)) return res.status(400).json({ erro: "Dados inválidos." });
@@ -118,8 +118,11 @@ app.post("/apostar", async (req, res) => {
     const userResult = await pool.query(`SELECT nome, email, cpf FROM users WHERE id = $1`, [usuario_id]);
     const userData = userResult.rows[0];
 
-    // 2. Cria a cartela
-    const resultCartela = await pool.query(`INSERT INTO cartelas (usuario_id, rodada_id, status_pagamento) VALUES ($1, $2, 'pendente') RETURNING id`, [usuario_id, rodada_id]);
+    // 2. Cria a cartela salvando a origem como mercadopago
+    const resultCartela = await pool.query(
+      `INSERT INTO cartelas (usuario_id, rodada_id, status_pagamento, metodo_pagamento) VALUES ($1, $2, 'pendente', 'mercadopago') RETURNING id`, 
+      [usuario_id, rodada_id]
+    );
     const cartela_id = resultCartela.rows[0].id;
     
     // 3. Salva os palpites
@@ -139,8 +142,8 @@ app.post("/apostar", async (req, res) => {
                 first_name: userData.nome,
                 identification: { type: 'CPF', number: userData.cpf || '00000000000' }
             },
-            external_reference: cartela_id.toString(), // Isso liga o PIX à sua cartela
-            notification_url: `${process.env.BACKEND_URL}/webhook/mercadopago` // A URL que o MP vai fofocar quando pagar
+            external_reference: cartela_id.toString(), 
+            notification_url: `${process.env.BACKEND_URL}/webhook/mercadopago` 
         }
     });
 
@@ -200,7 +203,7 @@ app.get("/meus-palpites/:usuario_id", async (req, res) => {
 // 4. ADMIN E RESULTADOS
 app.get("/admin/cartelas", async (req, res) => {
   try {
-    const query = `SELECT c.id, c.status_pagamento, c.data_criacao, u.nome as usuario_nome, r.nome as rodada_nome FROM cartelas c JOIN users u ON c.usuario_id = u.id JOIN rodadas r ON c.rodada_id = r.id ORDER BY c.id DESC`;
+    const query = `SELECT c.id, c.status_pagamento, c.metodo_pagamento, c.data_criacao, u.nome as usuario_nome, r.nome as rodada_nome FROM cartelas c JOIN users u ON c.usuario_id = u.id JOIN rodadas r ON c.rodada_id = r.id ORDER BY c.id DESC`;
     const result = await pool.query(query);
     res.json(result.rows);
   } catch (err) {
