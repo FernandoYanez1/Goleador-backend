@@ -2,6 +2,7 @@ const express = require("express");
 const cors = require("cors");
 const pool = require("./database.js");
 const { MercadoPagoConfig, Payment } = require('mercadopago');
+const bcrypt = require('bcrypt'); // <-- NOVA BIBLIOTECA
 
 const app = express();
 app.use(cors());
@@ -9,10 +10,8 @@ app.use(express.json());
 
 const PORT = process.env.PORT || 3001;
 
-// Configuração do Mercado Pago (Pega o token do ambiente)
 const client = new MercadoPagoConfig({ accessToken: process.env.MP_ACCESS_TOKEN });
 
-// 1. ROTAS BÁSICAS E AUTENTICAÇÃO
 app.get("/", (req, res) => {
   res.json({ mensagem: "Backend Goleador VIP rodando no PostgreSQL com MP!" });
 });
@@ -20,8 +19,12 @@ app.get("/", (req, res) => {
 app.post("/cadastro", async (req, res) => {
   const { nome, email, cpf, telefone, senha } = req.body;
   try {
+    // 1. Criptografa a senha antes de salvar no banco
+    const senhaCriptografada = await bcrypt.hash(senha, 10);
+    
     const query = `INSERT INTO users (nome, email, cpf, telefone, senha) VALUES ($1, $2, $3, $4, $5) RETURNING id`;
-    const result = await pool.query(query, [nome, email, cpf, telefone, senha]);
+    // 2. Salva a senha criptografada
+    const result = await pool.query(query, [nome, email, cpf, telefone, senhaCriptografada]);
     res.status(201).json({ mensagem: "Usuário cadastrado com sucesso!", id_usuario: result.rows[0].id });
   } catch (err) {
     res.status(400).json({ erro: "E-mail ou CPF já utilizado." });
@@ -31,10 +34,18 @@ app.post("/cadastro", async (req, res) => {
 app.post("/login", async (req, res) => {
   const { email, senha } = req.body;
   try {
-    const result = await pool.query(`SELECT * FROM users WHERE email = $1 AND senha = $2`, [email, senha]);
+    const result = await pool.query(`SELECT * FROM users WHERE email = $1`, [email]);
     if (result.rows.length > 0) {
       const row = result.rows[0];
-      res.status(200).json({ mensagem: "Login realizado!", usuario: { id: row.id, nome: row.nome, email: row.email, role: row.role }});
+      
+      // 3. O bcrypt compara a senha digitada agora com a hash feia salva no banco
+      const senhaValida = await bcrypt.compare(senha, row.senha);
+      
+      if (senhaValida) {
+        res.status(200).json({ mensagem: "Login realizado!", usuario: { id: row.id, nome: row.nome, email: row.email, role: row.role }});
+      } else {
+        res.status(401).json({ erro: "E-mail ou senha incorretos." });
+      }
     } else {
       res.status(401).json({ erro: "E-mail ou senha incorretos." });
     }
