@@ -309,6 +309,43 @@ app.get("/auditoria", async (req, res) => {
   }
 });
 
+// --- NOVAS ROTAS DE ESTATÍSTICAS E HALL DA FAMA ---
+
+app.get('/estatisticas/:usuario_id', async (req, res) => {
+    const { usuario_id } = req.params;
+    try {
+        const cartelas = await pool.query("SELECT COUNT(id) as total_bilhetes FROM cartelas WHERE usuario_id = $1 AND status_pagamento = 'aprovado'", [usuario_id]);
+        const cravadas = await pool.query("SELECT COUNT(*) as placares_exatos FROM palpites p JOIN cartelas c ON p.cartela_id = c.id WHERE c.usuario_id = $1 AND p.pontos_ganhos = 15 AND c.status_pagamento = 'aprovado'", [usuario_id]);
+        
+        res.json({
+            total_bilhetes: parseInt(cartelas.rows[0].total_bilhetes || 0),
+            placares_exatos: parseInt(cravadas.rows[0].placares_exatos || 0)
+        });
+    } catch (error) {
+        res.status(500).json({ erro: "Erro ao buscar estatísticas." });
+    }
+});
+
+app.get('/hall-da-fama', async (req, res) => {
+    try {
+        // Busca a pontuação de todo mundo em TODAS as rodadas finalizadas
+        const query = `
+            SELECT c.rodada_id, r.nome as rodada_nome, u.id as usuario_id, u.nome as usuario_nome, c.id as cartela_id, COALESCE(SUM(p.pontos_ganhos), 0) as pontuacao_total 
+            FROM cartelas c 
+            JOIN usuarios u ON c.usuario_id = u.id 
+            JOIN rodadas r ON c.rodada_id = r.id 
+            LEFT JOIN palpites p ON p.cartela_id = c.id 
+            WHERE c.status_pagamento = 'aprovado' AND r.status = 'finalizada' 
+            GROUP BY c.rodada_id, r.nome, u.id, u.nome, c.id 
+            ORDER BY c.rodada_id DESC, pontuacao_total DESC
+        `;
+        const result = await pool.query(query);
+        res.json(result.rows);
+    } catch (error) {
+        res.status(500).json({ erro: "Erro ao carregar o Hall da Fama." });
+    }
+});
+
 // 5. O WEBHOOK (A MÁGICA DA APROVAÇÃO)
 app.post("/webhook/mercadopago", async (req, res) => {
   const { action, data } = req.body;
