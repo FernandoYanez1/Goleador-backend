@@ -333,3 +333,17 @@ app.post("/webhook/mercadopago", async (req, res) => {
 app.listen(PORT, () => {
   console.log(`Servidor rodando com PostgreSQL e Mercado Pago na porta ${PORT}`);
 });
+
+//Definir qual rodada mostrar no Ranking
+app.put('/admin/definir-ranking', async (req, res) => {
+    const { rodada_id } = req.body;
+    try {
+        // Desmarca todas as rodadas
+        await pool.query('UPDATE rodadas SET exibir_no_ranking = FALSE');
+        // Marca apenas a rodada escolhida por você
+        await pool.query('UPDATE rodadas SET exibir_no_ranking = TRUE WHERE id = $1', [rodada_id]);
+        res.status(200).json({ mensagem: "Ranking atualizado!" });
+    } catch (error) {
+        res.status(500).json({ erro: "Erro ao atualizar ranking no servidor." });
+    }
+});
