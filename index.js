@@ -664,6 +664,48 @@ app.get("/auditoria", async (req, res) => {
     }
 });
 
+// ==========================================
+// 6. CAMPEÃO OFICIAL DA COPA
+// ==========================================
+
+app.put('/admin/definir-campeao', async (req, res) => {
+
+    const { rodada_id, campeao } = req.body;
+
+    try {
+
+        await pool.query(`
+            UPDATE rodadas
+            SET campeao_oficial = $1
+            WHERE id = $2
+        `, [campeao, rodada_id]);
+
+        // dá 1000 pontos pra quem acertou
+        await pool.query(`
+            UPDATE predictions p
+            SET pontos_ganhos = 1000
+            FROM cartelas c
+            WHERE p.cartela_id = c.id
+            AND c.rodada_id = $1
+            AND p.palpite_texto = $2
+        `, [rodada_id, campeao]);
+
+        res.json({
+            sucesso: true,
+            mensagem: 'Campeão definido!'
+        });
+
+    } catch (err) {
+
+        console.error(err);
+
+        res.status(500).json({
+            erro: 'Erro ao definir campeão.'
+        });
+
+    }
+});
+
 app.listen(PORT, () => {
     console.log(`Servidor rodando na porta ${PORT}`);
 });
