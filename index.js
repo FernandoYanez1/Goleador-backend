@@ -106,7 +106,18 @@ app.post("/rodadas", async (req, res) => {
     }
 });
 
+// LISTA PÚBLICA (ESCONDE AS ARQUIVADAS)
 app.get("/rodadas", async (req, res) => {
+    try {
+        const result = await pool.query(`SELECT * FROM rodadas WHERE status != 'arquivada' ORDER BY id DESC`);
+        res.status(200).json(result.rows);
+    } catch (err) {
+        res.status(500).json({ erro: err.message });
+    }
+});
+
+// LISTA ADMIN (MOSTRA TUDO)
+app.get("/admin/rodadas-todas", async (req, res) => {
     try {
         const result = await pool.query(`SELECT * FROM rodadas ORDER BY id DESC`);
         res.status(200).json(result.rows);
