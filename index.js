@@ -18,7 +18,6 @@ app.get("/", (req, res) => {
 // ==========================================
 // 1. AUTENTICAÇÃO E USUÁRIOS
 // ==========================================
-
 app.post("/cadastro", async (req, res) => {
     const { nome, email, cpf, telefone, senha } = req.body;
     try {
@@ -38,7 +37,6 @@ app.post("/login", async (req, res) => {
         if (result.rows.length > 0) {
             const row = result.rows[0];
             const senhaValida = await bcrypt.compare(senha, row.senha);
-            
             if (senhaValida) {
                 res.status(200).json({ mensagem: "Login realizado!", usuario: { id: row.id, nome: row.nome, email: row.email, role: row.role }});
             } else {
@@ -69,7 +67,6 @@ app.put("/resetar-senha", async (req, res) => {
 // ==========================================
 // 2. PAÍSES E SELEÇÕES (TEAMS)
 // ==========================================
-
 app.post("/teams", async (req, res) => {
     const { nome, sigla, bandeira } = req.body;
     try {
@@ -93,7 +90,6 @@ app.get("/teams", async (req, res) => {
 // ==========================================
 // 3. GESTÃO DE RODADAS E JOGOS
 // ==========================================
-
 app.post("/rodadas", async (req, res) => {
     try {
         const { nome, preco, tipo } = req.body;
@@ -106,7 +102,7 @@ app.post("/rodadas", async (req, res) => {
     }
 });
 
-// LISTA PÚBLICA (ESCONDE AS ARQUIVADAS)
+// Lista Pública: Só mostra o que NÃO for arquivado
 app.get("/rodadas", async (req, res) => {
     try {
         const result = await pool.query(`SELECT * FROM rodadas WHERE status != 'arquivada' ORDER BY id DESC`);
@@ -116,7 +112,7 @@ app.get("/rodadas", async (req, res) => {
     }
 });
 
-// LISTA ADMIN (MOSTRA TUDO)
+// Lista Admin: Mostra TUDO
 app.get("/admin/rodadas-todas", async (req, res) => {
     try {
         const result = await pool.query(`SELECT * FROM rodadas ORDER BY id DESC`);
@@ -227,7 +223,6 @@ app.post("/finalizar-jogo", async (req, res) => {
 // ==========================================
 // 4. APOSTAS E PAGAMENTOS (MERCADO PAGO)
 // ==========================================
-
 app.post("/apostar", async (req, res) => {
     const { usuario_id, rodada_id, apostas, palpite_campeao } = req.body;
     
@@ -241,7 +236,6 @@ app.post("/apostar", async (req, res) => {
         const rodadaData = rodadaResult.rows[0];
         const precoRodada = Number(rodadaData.preco) || 20.00;
 
-        // GERADOR DO NÚMERO VISUAL DO BILHETE
         const numResult = await pool.query(`SELECT COALESCE(MAX(numero_bilhete), 0) + 1 AS prox FROM cartelas WHERE rodada_id = $1`, [rodada_id]);
         const numero_bilhete = numResult.rows[0].prox;
 
@@ -306,9 +300,8 @@ app.post("/webhook/mercadopago", async (req, res) => {
 });
 
 // ==========================================
-// 5. PAINEL ADMIN (GESTÃO DE BILHETES)
+// 5. PAINEL ADMIN E CONSULTAS
 // ==========================================
-
 app.get("/admin/cartelas", async (req, res) => {
     try {
         const query = `SELECT c.id, c.numero_bilhete, c.status_pagamento, c.metodo_pagamento, c.data_criacao, u.nome as usuario_nome, r.nome as rodada_nome FROM cartelas c JOIN users u ON c.usuario_id = u.id JOIN rodadas r ON c.rodada_id = r.id ORDER BY c.id DESC`;
@@ -337,10 +330,6 @@ app.delete("/deletar-cartela/:id", async (req, res) => {
     }
 });
 
-// ==========================================
-// 6. RANKING, AUDITORIA E PERFIL
-// ==========================================
-
 app.get("/meus-palpites/:usuario_id", async (req, res) => {
     try {
         const query = `
@@ -351,7 +340,7 @@ app.get("/meus-palpites/:usuario_id", async (req, res) => {
             JOIN rodadas r ON c.rodada_id = r.id
             JOIN predictions p ON c.id = p.cartela_id
             LEFT JOIN matches m ON p.match_id = m.id
-            WHERE c.usuario_id = $1
+            WHERE c.usuario_id = $1 AND r.status != 'arquivada'
             ORDER BY c.id DESC, m.data_hora ASC
         `;
         const result = await pool.query(query, [req.params.usuario_id]);
@@ -384,8 +373,10 @@ app.get("/ranking", async (req, res) => {
     try {
         const query = `
             SELECT c.id as cartela_id, c.numero_bilhete, c.rodada_id, u.id as usuario_id, u.nome, COALESCE(SUM(p.pontos_ganhos), 0) as pontuacao_total
-            FROM cartelas c JOIN users u ON c.usuario_id = u.id LEFT JOIN predictions p ON c.id = p.cartela_id
-            WHERE c.status_pagamento = 'aprovado' GROUP BY c.id, c.numero_bilhete, c.rodada_id, u.id, u.nome ORDER BY pontuacao_total DESC, c.id ASC
+            FROM cartelas c JOIN users u ON c.usuario_id = u.id LEFT JOIN predictions p ON c.id = p.cartela_id JOIN rodadas r ON c.rodada_id = r.id
+            WHERE c.status_pagamento = 'aprovado' AND r.status != 'arquivada'
+            GROUP BY c.id, c.numero_bilhete, c.rodada_id, u.id, u.nome 
+            ORDER BY pontuacao_total DESC, c.id ASC
         `;
         const result = await pool.query(query);
         res.status(200).json(result.rows);
@@ -398,7 +389,8 @@ app.get("/auditoria", async (req, res) => {
     try {
         const query = `
             SELECT u.nome as usuario_nome, c.id as cartela_id, c.numero_bilhete, c.status_pagamento, m.time_casa, m.time_visitante, p.palpite_casa, p.palpite_visitante, p.palpite_texto
-            FROM predictions p JOIN cartelas c ON p.cartela_id = c.id JOIN users u ON c.usuario_id = u.id LEFT JOIN matches m ON p.match_id = m.id
+            FROM predictions p JOIN cartelas c ON p.cartela_id = c.id JOIN users u ON c.usuario_id = u.id LEFT JOIN matches m ON p.match_id = m.id JOIN rodadas r ON c.rodada_id = r.id
+            WHERE r.status != 'arquivada'
             ORDER BY u.nome ASC, c.numero_bilhete ASC, m.data_hora ASC
         `;
         const result = await pool.query(query);
@@ -408,40 +400,6 @@ app.get("/auditoria", async (req, res) => {
     }
 });
 
-app.get('/estatisticas/:usuario_id', async (req, res) => {
-    const { usuario_id } = req.params;
-    try {
-        const cartelas = await pool.query("SELECT COUNT(id) as total_bilhetes FROM cartelas WHERE usuario_id = $1 AND status_pagamento = 'aprovado'", [usuario_id]);
-        const cravadas = await pool.query("SELECT COUNT(*) as placares_exatos FROM predictions p JOIN cartelas c ON p.cartela_id = c.id WHERE c.usuario_id = $1 AND p.pontos_ganhos = 15 AND c.status_pagamento = 'aprovado'", [usuario_id]);
-        
-        res.json({
-            total_bilhetes: parseInt(cartelas.rows[0].total_bilhetes || 0),
-            placares_exatos: parseInt(cravadas.rows[0].placares_exatos || 0)
-        });
-    } catch (error) {
-        res.status(500).json({ erro: "Erro ao buscar estatísticas." });
-    }
-});
-
-app.get('/hall-da-fama', async (req, res) => {
-    try {
-        const query = `
-            SELECT c.rodada_id, r.nome as rodada_nome, u.id as usuario_id, u.nome as usuario_nome, c.id as cartela_id, COALESCE(SUM(p.pontos_ganhos), 0) as pontuacao_total 
-            FROM cartelas c 
-            JOIN users u ON c.usuario_id = u.id 
-            JOIN rodadas r ON c.rodada_id = r.id 
-            LEFT JOIN predictions p ON p.cartela_id = c.id 
-            WHERE c.status_pagamento = 'aprovado' AND r.status = 'finalizada' 
-            GROUP BY c.rodada_id, r.nome, u.id, u.nome, c.id 
-            ORDER BY c.rodada_id DESC, pontuacao_total DESC
-        `;
-        const result = await pool.query(query);
-        res.json(result.rows);
-    } catch (error) {
-        res.status(500).json({ erro: "Erro ao carregar o Hall da Fama." });
-    }
-});
-
 app.listen(PORT, () => {
-    console.log(`Servidor rodando com PostgreSQL e Mercado Pago na porta ${PORT}`);
+    console.log(`Servidor rodando na porta ${PORT}`);
 });
