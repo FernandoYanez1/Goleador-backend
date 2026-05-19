@@ -68,13 +68,51 @@ app.put("/resetar-senha", async (req, res) => {
 // 2. PAÍSES E SELEÇÕES (TEAMS)
 // ==========================================
 app.post("/teams", async (req, res) => {
-    const { nome, sigla, bandeira } = req.body;
+
+    const {
+        nome,
+        sigla,
+        bandeira,
+        pais,
+        cor_primaria,
+        cor_secundaria
+    } = req.body;
+
     try {
-        const query = `INSERT INTO teams (nome, sigla, bandeira) VALUES ($1, $2, $3) RETURNING id`;
-        const result = await pool.query(query, [nome, sigla.toUpperCase(), bandeira]);
-        res.status(201).json({ mensagem: "Seleção cadastrada com sucesso!", id: result.rows[0].id });
+
+        const query = `
+            INSERT INTO teams (
+                nome,
+                sigla,
+                bandeira,
+                pais,
+                cor_primaria,
+                cor_secundaria
+            )
+            VALUES ($1, $2, $3, $4, $5, $6)
+            RETURNING id
+        `;
+
+        const result = await pool.query(query, [
+            nome,
+            sigla.toUpperCase(),
+            bandeira,
+            pais || null,
+            cor_primaria || null,
+            cor_secundaria || null
+        ]);
+
+        res.status(201).json({
+            mensagem: "Time cadastrado com sucesso!",
+            id: result.rows[0].id
+        });
+
     } catch (err) {
-        res.status(400).json({ erro: "Esta seleção já está cadastrada ou os dados enviados são inválidos." });
+
+        res.status(400).json({
+            erro: "Erro ao cadastrar time."
+        });
+
     }
 });
 
@@ -131,25 +169,251 @@ app.put("/rodadas/:id/status", async (req, res) => {
     }
 });
 
-app.put('/admin/definir-ranking', async (req, res) => {
-    const { rodada_id } = req.body;
+// ==========================================
+// NOVO FLUXO DE STATUS DAS RODADAS
+// ==========================================
+
+// Abrir Rodada
+app.put("/rodadas/:id/abrir", async (req, res) => {
     try {
-        await pool.query('UPDATE rodadas SET exibir_no_ranking = FALSE');
-        await pool.query('UPDATE rodadas SET exibir_no_ranking = TRUE WHERE id = $1', [rodada_id]);
-        res.status(200).json({ mensagem: "Ranking atualizado!" });
+        await pool.query(
+            `UPDATE rodadas 
+             SET status = 'aberta'
+             WHERE id = $1`,
+            [req.params.id]
+        );
+
+        res.json({
+            sucesso: true,
+            mensagem: "Rodada aberta com sucesso!"
+        });
+    } catch (err) {
+        res.status(500).json({ erro: err.message });
+    }
+});
+
+// Pausar Rodada
+app.put("/rodadas/:id/pausar", async (req, res) => {
+    try {
+        await pool.query(
+            `UPDATE rodadas 
+             SET status = 'pausada'
+             WHERE id = $1`,
+            [req.params.id]
+        );
+
+        res.json({
+            sucesso: true,
+            mensagem: "Apostas pausadas!"
+        });
+    } catch (err) {
+        res.status(500).json({ erro: err.message });
+    }
+});
+
+// Reabrir Rodada
+app.put("/rodadas/:id/reabrir", async (req, res) => {
+    try {
+        await pool.query(
+            `UPDATE rodadas 
+             SET status = 'aberta'
+             WHERE id = $1`,
+            [req.params.id]
+        );
+
+        res.json({
+            sucesso: true,
+            mensagem: "Apostas reabertas!"
+        });
+    } catch (err) {
+        res.status(500).json({ erro: err.message });
+    }
+});
+
+// Encerrar Rodada
+app.put("/rodadas/:id/encerrar", async (req, res) => {
+    try {
+        await pool.query(
+            `UPDATE rodadas 
+             SET 
+                status = 'encerrada',
+                encerrada_em = NOW()
+             WHERE id = $1`,
+            [req.params.id]
+        );
+
+        res.json({
+            sucesso: true,
+            mensagem: "Rodada encerrada!"
+        });
+    } catch (err) {
+        res.status(500).json({ erro: err.message });
+    }
+});
+
+// Arquivar Rodada
+app.put("/rodadas/:id/arquivar", async (req, res) => {
+    try {
+        await pool.query(
+            `UPDATE rodadas 
+             SET status = 'arquivada'
+             WHERE id = $1`,
+            [req.params.id]
+        );
+
+        res.json({
+            sucesso: true,
+            mensagem: "Rodada arquivada!"
+        });
+    } catch (err) {
+        res.status(500).json({ erro: err.message });
+    }
+});
+
+app.put('/admin/definir-ranking', async (req, res) => {
+    const { rodada_id, fixado = true } = req.body;
+
+    try {
+        await pool.query(
+            `
+            UPDATE rodadas
+            SET fixado_ranking = $1
+            WHERE id = $2
+            `,
+            [fixado, rodada_id]
+        );
+
+        res.status(200).json({
+            sucesso: true,
+            mensagem: fixado
+                ? "Ranking fixado!"
+                : "Ranking removido!"
+        });
+
     } catch (error) {
-        res.status(500).json({ erro: "Erro ao atualizar ranking no servidor." });
+        res.status(500).json({
+            erro: "Erro ao atualizar ranking."
+        });
+    }
+});
+
+// Buscar rankings fixados
+app.get('/rankings-fixados', async (req, res) => {
+    try {
+
+        const result = await pool.query(`
+            SELECT *
+            FROM rodadas
+            WHERE fixado_ranking = true
+              AND status != 'arquivada'
+            ORDER BY ordem_ranking ASC, id DESC
+        `);
+
+        res.status(200).json(result.rows);
+
+    } catch (err) {
+        res.status(500).json({
+            erro: err.message
+        });
     }
 });
 
 app.post("/cadastrar-jogo", async (req, res) => {
-    const { rodada_id, time_casa, time_visitante, sigla_casa, sigla_visitante, logo_casa, logo_visitante, data_hora } = req.body;
+
+    const {
+        rodada_id,
+        time_casa_id,
+        time_visitante_id,
+        data_hora
+    } = req.body;
+
     try {
-        const query = `INSERT INTO matches (rodada_id, time_casa, time_visitante, sigla_casa, sigla_visitante, logo_casa, logo_visitante, data_hora) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`;
-        await pool.query(query, [rodada_id, time_casa, time_visitante, sigla_casa, sigla_visitante, logo_casa, logo_visitante, data_hora]);
-        res.status(201).json({ mensagem: "Jogo cadastrado na rodada!" });
+
+        const timeCasa = await pool.query(
+            `SELECT * FROM teams WHERE id = $1`,
+            [time_casa_id]
+        );
+
+        const timeVisitante = await pool.query(
+            `SELECT * FROM teams WHERE id = $1`,
+            [time_visitante_id]
+        );
+
+        if (
+            timeCasa.rows.length === 0 ||
+            timeVisitante.rows.length === 0
+        ) {
+            return res.status(400).json({
+                erro: "Times inválidos."
+            });
+        }
+
+        const casa = timeCasa.rows[0];
+        const visitante = timeVisitante.rows[0];
+
+        const query = `
+            INSERT INTO matches (
+                rodada_id,
+
+                time_casa_id,
+                time_visitante_id,
+
+                time_casa,
+                time_visitante,
+
+                sigla_casa,
+                sigla_visitante,
+
+                logo_casa,
+                logo_visitante,
+
+                data_hora,
+                status
+            )
+            VALUES (
+                $1,
+                $2,
+                $3,
+                $4,
+                $5,
+                $6,
+                $7,
+                $8,
+                $9,
+                $10,
+                'agendado'
+            )
+        `;
+
+        await pool.query(query, [
+            rodada_id,
+
+            casa.id,
+            visitante.id,
+
+            casa.nome,
+            visitante.nome,
+
+            casa.sigla,
+            visitante.sigla,
+
+            casa.bandeira,
+            visitante.bandeira,
+
+            data_hora
+        ]);
+
+        res.status(201).json({
+            sucesso: true,
+            mensagem: "Jogo cadastrado!"
+        });
+
     } catch (err) {
-        res.status(500).json({ erro: err.message });
+
+        res.status(500).json({
+            erro: err.message
+        });
+
     }
 });
 
