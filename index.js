@@ -121,32 +121,50 @@ app.delete('/deletar-jogo/:id', async (req, res) => {
 
 // 3. CARTELAS E APOSTAS (COM PIX AUTOMÁTICO E ORIGEM MERCADO PAGO)
 app.post("/apostar", async (req, res) => {
-  const { usuario_id, rodada_id, apostas } = req.body;
-  if (!apostas || !Array.isArray(apostas)) return res.status(400).json({ erro: "Dados inválidos." });
+  const { usuario_id, rodada_id, apostas, palpite_campeao } = req.body;
+  
+  // Verifica se mandou as apostas de placar OU a aposta do campeão
+  if ((!apostas || !Array.isArray(apostas)) && !palpite_campeao) {
+      return res.status(400).json({ erro: "Dados inválidos." });
+  }
 
   try {
-    // 1. Busca os dados do usuário para mandar pro Mercado Pago
+    // 1. Busca os dados do usuário
     const userResult = await pool.query(`SELECT nome, email, cpf FROM users WHERE id = $1`, [usuario_id]);
     const userData = userResult.rows[0];
 
-    // 2. Cria a cartela salvando a origem como mercadopago
+    // 2. Busca OS DETALHES DA RODADA (Para saber o Preço e o Tipo)
+    const rodadaResult = await pool.query(`SELECT nome, preco, tipo FROM rodadas WHERE id = $1`, [rodada_id]);
+    const rodadaData = rodadaResult.rows[0];
+    const precoRodada = Number(rodadaData.preco) || 20.00;
+
+    // 3. Cria a cartela
     const resultCartela = await pool.query(
       `INSERT INTO cartelas (usuario_id, rodada_id, status_pagamento, metodo_pagamento) VALUES ($1, $2, 'pendente', 'mercadopago') RETURNING id`, 
       [usuario_id, rodada_id]
     );
     const cartela_id = resultCartela.rows[0].id;
     
-    // 3. Salva os palpites
-    const queryPalpite = `INSERT INTO predictions (cartela_id, match_id, palpite_casa, palpite_visitante, pontos_ganhos) VALUES ($1, $2, $3, $4, 0)`;
-    const promessas = apostas.map(aposta => pool.query(queryPalpite, [cartela_id, aposta.match_id, aposta.palpite_casa, aposta.palpite_visitante]));
-    await Promise.all(promessas);
+    // 4. Salva os palpites dependendo do TIPO da rodada
+    if (rodadaData.tipo === 'campeao' && palpite_campeao) {
+        // Aposta de Campeão (Não tem match_id nem gols, apenas o texto da seleção)
+        await pool.query(
+            `INSERT INTO predictions (cartela_id, palpite_texto, pontos_ganhos) VALUES ($1, $2, 0)`,
+            [cartela_id, palpite_campeao]
+        );
+    } else {
+        // Apostas Normais de Placar
+        const queryPalpite = `INSERT INTO predictions (cartela_id, match_id, palpite_casa, palpite_visitante, pontos_ganhos) VALUES ($1, $2, $3, $4, 0)`;
+        const promessas = apostas.map(aposta => pool.query(queryPalpite, [cartela_id, aposta.match_id, aposta.palpite_casa, aposta.palpite_visitante]));
+        await Promise.all(promessas);
+    }
 
-    // 4. GERA O PIX NO MERCADO PAGO
+    // 5. GERA O PIX NO MERCADO PAGO COM O PREÇO DINÂMICO
     const payment = new Payment(client);
     const pixResponse = await payment.create({
         body: {
-            transaction_amount: 20.00,
-            description: `Cartela #${cartela_id} - Bolão Goleador VIP`,
+            transaction_amount: precoRodada, // <-- AQUI A MÁGICA DO PREÇO ACONTECE
+            description: `Cartela #${cartela_id} (${rodadaData.nome}) - Goleador VIP`,
             payment_method_id: 'pix',
             payer: {
                 email: userData.email,
@@ -158,7 +176,6 @@ app.post("/apostar", async (req, res) => {
         }
     });
 
-    // 5. Devolve para o Front o código copia e cola e o QR Code em imagem
     res.status(201).json({ 
         mensagem: "Cartela e PIX gerados com sucesso!", 
         cartela_id,
@@ -344,6 +361,30 @@ app.get('/hall-da-fama', async (req, res) => {
     } catch (error) {
         res.status(500).json({ erro: "Erro ao carregar o Hall da Fama." });
     }
+});
+
+// --- ROTAS PARA CADASTRO E BUSCA DE SELEÇÕES ---
+
+// 1. Cadastrar uma nova seleção (Nome, Sigla e URL da Bandeira)
+app.post("/teams", async (req, res) => {
+  const { nome, sigla, bandeira } = req.body;
+  try {
+    const query = `INSERT INTO teams (nome, sigla, bandeira) VALUES ($1, $2, $3) RETURNING id`;
+    const result = await pool.query(query, [nome, sigla.toUpperCase(), bandeira]);
+    res.status(201).json({ mensagem: "Seleção cadastrada com sucesso!", id: result.rows[0].id });
+  } catch (err) {
+    res.status(400).json({ erro: "Esta seleção já está cadastrada ou os dados enviados são inválidos." });
+  }
+});
+
+// 2. Listar todas as seleções em ordem alfabética para o Frontend consumir
+app.get("/teams", async (req, res) => {
+  try {
+    const result = await pool.query(`SELECT * FROM teams ORDER BY nome ASC`);
+    res.status(200).json(result.rows);
+  } catch (err) {
+    res.status(500).json({ erro: "Erro ao buscar a lista de seleções no servidor." });
+  }
 });
 
 // 5. O WEBHOOK (A MÁGICA DA APROVAÇÃO)
