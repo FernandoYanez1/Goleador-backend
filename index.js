@@ -635,7 +635,27 @@ app.post("/apostar", async (req, res) => {
             }
         });
 
-        console.log("PIX GERADO COM SUCESSO");
+        const pixCopiaCola =
+    pixResponse.point_of_interaction.transaction_data.qr_code;
+
+const qrCodeBase64 =
+    pixResponse.point_of_interaction.transaction_data.qr_code_base64;
+
+// SALVA O PIX NA CARTELA
+await pool.query(
+    `
+    UPDATE cartelas
+    SET
+        pix_copia_cola = $1,
+        qr_code_base64 = $2
+    WHERE id = $3
+    `,
+    [
+        pixCopiaCola,
+        qrCodeBase64,
+        cartela_id
+    ]
+);
 
         // ==========================================
         // RETORNO FRONT
@@ -717,7 +737,8 @@ app.get("/meus-palpites/:usuario_id", async (req, res) => {
         const query = `
             SELECT c.id as cartela_id, c.numero_bilhete, c.status_pagamento, c.data_criacao, r.nome as rodada_nome, r.status as rodada_status, r.tipo as rodada_tipo,
                    p.id as palpite_id, p.palpite_casa, p.palpite_visitante, p.pontos_ganhos, p.palpite_texto,
-                   m.time_casa, m.time_visitante, m.logo_casa, m.logo_visitante, m.gols_casa, m.gols_visitante, m.data_hora
+                   m.time_casa, m.time_visitante, m.logo_casa, m.logo_visitante, m.gols_casa, m.gols_visitante, m.data_hora, c.pix_copia_cola,
+                  c.qr_code_base64
             FROM cartelas c
             JOIN rodadas r ON c.rodada_id = r.id
             JOIN predictions p ON c.id = p.cartela_id
@@ -732,7 +753,8 @@ app.get("/meus-palpites/:usuario_id", async (req, res) => {
             if (!cartela) {
                 cartela = {
                     cartela_id: row.cartela_id, numero_bilhete: row.numero_bilhete, rodada_nome: row.rodada_nome, rodada_status: row.rodada_status,
-                    rodada_tipo: row.rodada_tipo, status_pagamento: row.status_pagamento, data_criacao: row.data_criacao, total_pontos: 0, palpites: []
+                    rodada_tipo: row.rodada_tipo, status_pagamento: row.status_pagamento, data_criacao: row.data_criacao, total_pontos: 0, palpites: [], pix_copia_cola: row.pix_copia_cola,
+qr_code_base64: row.qr_code_base64
                 };
                 acc.push(cartela);
             }
