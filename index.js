@@ -473,60 +473,194 @@ app.post("/finalizar-jogo", async (req, res) => {
 // ==========================================
 app.post("/apostar", async (req, res) => {
     const { usuario_id, rodada_id, apostas, palpite_campeao } = req.body;
-    
-    if ((!apostas || !Array.isArray(apostas)) && !palpite_campeao) return res.status(400).json({ erro: "Dados inválidos." });
+
+    if ((!apostas || !Array.isArray(apostas)) && !palpite_campeao) {
+        return res.status(400).json({
+            erro: "Dados inválidos."
+        });
+    }
 
     try {
-        const userResult = await pool.query(`SELECT nome, email, cpf FROM users WHERE id = $1`, [usuario_id]);
+
+        // ==========================================
+        // BUSCA USUÁRIO
+        // ==========================================
+        const userResult = await pool.query(
+            `SELECT nome, email, cpf FROM users WHERE id = $1`,
+            [usuario_id]
+        );
+
+        if (userResult.rows.length === 0) {
+            return res.status(404).json({
+                erro: "Usuário não encontrado."
+            });
+        }
+
         const userData = userResult.rows[0];
 
-        const rodadaResult = await pool.query(`SELECT nome, preco, tipo FROM rodadas WHERE id = $1`, [rodada_id]);
-        const rodadaData = rodadaResult.rows[0];
-        const precoRodada = Number(rodadaData.preco) || 20.00;
+        // ==========================================
+        // BUSCA RODADA
+        // ==========================================
+        const rodadaResult = await pool.query(
+            `SELECT nome, preco, tipo FROM rodadas WHERE id = $1`,
+            [rodada_id]
+        );
 
-        const numResult = await pool.query(`SELECT COALESCE(MAX(numero_bilhete), 0) + 1 AS prox FROM cartelas WHERE rodada_id = $1`, [rodada_id]);
+        if (rodadaResult.rows.length === 0) {
+            return res.status(404).json({
+                erro: "Rodada não encontrada."
+            });
+        }
+
+        const rodadaData = rodadaResult.rows[0];
+
+        const precoRodada = parseFloat(rodadaData.preco) || 20.00;
+
+        // ==========================================
+        // GERA NÚMERO BILHETE
+        // ==========================================
+        const numResult = await pool.query(
+            `SELECT COALESCE(MAX(numero_bilhete), 0) + 1 AS prox 
+             FROM cartelas 
+             WHERE rodada_id = $1`,
+            [rodada_id]
+        );
+
         const numero_bilhete = numResult.rows[0].prox;
 
+        // ==========================================
+        // CRIA CARTELA
+        // ==========================================
         const resultCartela = await pool.query(
-            `INSERT INTO cartelas (usuario_id, rodada_id, status_pagamento, metodo_pagamento, numero_bilhete) VALUES ($1, $2, 'pendente', 'mercadopago', $3) RETURNING id`, 
+            `
+            INSERT INTO cartelas (
+                usuario_id,
+                rodada_id,
+                status_pagamento,
+                metodo_pagamento,
+                numero_bilhete
+            )
+            VALUES (
+                $1,
+                $2,
+                'pendente',
+                'mercadopago',
+                $3
+            )
+            RETURNING id
+            `,
             [usuario_id, rodada_id, numero_bilhete]
         );
+
         const cartela_id = resultCartela.rows[0].id;
-        
+
+        // ==========================================
+        // SALVA PALPITES
+        // ==========================================
         if (rodadaData.tipo === 'campeao' && palpite_campeao) {
-            await pool.query(`INSERT INTO predictions (cartela_id, palpite_texto, pontos_ganhos) VALUES ($1, $2, 0)`, [cartela_id, palpite_campeao]);
+
+            await pool.query(
+                `
+                INSERT INTO predictions (
+                    cartela_id,
+                    palpite_texto,
+                    pontos_ganhos
+                )
+                VALUES ($1, $2, 0)
+                `,
+                [cartela_id, palpite_campeao]
+            );
+
         } else {
-            const queryPalpite = `INSERT INTO predictions (cartela_id, match_id, palpite_casa, palpite_visitante, pontos_ganhos) VALUES ($1, $2, $3, $4, 0)`;
-            const promessas = apostas.map(aposta => pool.query(queryPalpite, [cartela_id, aposta.match_id, aposta.palpite_casa, aposta.palpite_visitante]));
+
+            const queryPalpite = `
+                INSERT INTO predictions (
+                    cartela_id,
+                    match_id,
+                    palpite_casa,
+                    palpite_visitante,
+                    pontos_ganhos
+                )
+                VALUES ($1, $2, $3, $4, 0)
+            `;
+
+            const promessas = apostas.map(aposta =>
+                pool.query(queryPalpite, [
+                    cartela_id,
+                    aposta.match_id,
+                    aposta.palpite_casa,
+                    aposta.palpite_visitante
+                ])
+            );
+
             await Promise.all(promessas);
         }
 
+        // ==========================================
+        // LIMPA CPF
+        // ==========================================
+        const cpfLimpo = (userData.cpf || '')
+            .replace(/\D/g, '');
+
+        // ==========================================
+        // MERCADO PAGO
+        // ==========================================
+        console.log("MP TOKEN:", process.env.MP_ACCESS_TOKEN ? "OK" : "NÃO DEFINIDO");
+        console.log("BACKEND URL:", process.env.BACKEND_URL);
+
         const payment = new Payment(client);
+
         const pixResponse = await payment.create({
             body: {
-                transaction_amount: precoRodada,
+
+                transaction_amount: Number(precoRodada),
+
                 description: `Cartela #${numero_bilhete} (${rodadaData.nome}) - Goleador VIP`,
+
                 payment_method_id: 'pix',
+
                 payer: {
                     email: userData.email,
                     first_name: userData.nome,
-                    identification: { type: 'CPF', number: userData.cpf || '00000000000' }
+
+                    identification: {
+                        type: 'CPF',
+                        number: cpfLimpo || '00000000000'
+                    }
                 },
-                external_reference: cartela_id.toString(), 
-                notification_url: `${process.env.BACKEND_URL}/webhook/mercadopago` 
+
+                external_reference: cartela_id.toString(),
+
+                notification_url: `${process.env.BACKEND_URL}/webhook/mercadopago`
             }
         });
 
-        res.status(201).json({ 
-            mensagem: "Cartela e PIX gerados com sucesso!", 
+        console.log("PIX GERADO COM SUCESSO");
+
+        // ==========================================
+        // RETORNO FRONT
+        // ==========================================
+        return res.status(201).json({
+            mensagem: "Cartela e PIX gerados com sucesso!",
             cartela_id,
-            pix_copia_cola: pixResponse.point_of_interaction.transaction_data.qr_code,
-            qr_code_base64: pixResponse.point_of_interaction.transaction_data.qr_code_base64
+
+            pix_copia_cola:
+                pixResponse.point_of_interaction.transaction_data.qr_code,
+
+            qr_code_base64:
+                pixResponse.point_of_interaction.transaction_data.qr_code_base64
         });
 
     } catch (err) {
-        console.error(err);
-        res.status(500).json({ erro: "Erro ao gerar a cartela ou PIX." });
+
+        console.error("=================================");
+        console.error("ERRO AO GERAR PIX:");
+        console.error(JSON.stringify(err, null, 2));
+        console.error("=================================");
+
+        return res.status(500).json({
+            erro: "Erro ao gerar a cartela ou PIX."
+        });
     }
 });
 
