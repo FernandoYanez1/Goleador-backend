@@ -271,29 +271,13 @@ app.put("/rodadas/:id/arquivar", async (req, res) => {
 });
 
 app.put('/admin/definir-ranking', async (req, res) => {
-    const { rodada_id, fixado = true } = req.body;
-
+    const { rodada_id, fixado } = req.body;
     try {
-        await pool.query(
-            `
-            UPDATE rodadas
-            SET fixado_ranking = $1
-            WHERE id = $2
-            `,
-            [fixado, rodada_id]
-        );
-
-        res.status(200).json({
-            sucesso: true,
-            mensagem: fixado
-                ? "Ranking fixado!"
-                : "Ranking removido!"
-        });
-
+        // Agora ele lê se é para fixar (true) ou desfixar (false) apenas dessa rodada específica
+        await pool.query('UPDATE rodadas SET exibir_no_ranking = $1 WHERE id = $2', [fixado, rodada_id]);
+        res.status(200).json({ mensagem: "Ranking atualizado!" });
     } catch (error) {
-        res.status(500).json({
-            erro: "Erro ao atualizar ranking."
-        });
+        res.status(500).json({ erro: "Erro ao atualizar ranking no servidor." });
     }
 });
 
