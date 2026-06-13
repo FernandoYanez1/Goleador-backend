@@ -58,14 +58,15 @@ const crypto = require('crypto');
 const transporter = nodemailer.createTransport({
     host: 'smtp.gmail.com',
     port: 465,
-    secure: true, // true para porta 465
+    secure: true, 
     auth: {
         user: process.env.EMAIL_USER,
         pass: process.env.EMAIL_PASS  
     },
     tls: {
-        rejectUnauthorized: false // Evita bloqueios de certificado no Render
-    }
+        rejectUnauthorized: false
+    },
+    family: 4 // <--- A MÁGICA AQUI: Força o uso do IPv4, ignorando o IPv6 bloqueado pelo Render
 });
 
 // Endpoint 1: Solicitar link de recuperação
