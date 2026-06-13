@@ -54,11 +54,17 @@ const nodemailer = require('nodemailer');
 const crypto = require('crypto');
 
 // Configuração de envio de e-mails (Substitua pelos seus dados no .env)
+// Configuração corrigida para o Render não dar erro de rede (Timeout)
 const transporter = nodemailer.createTransport({
-    service: 'gmail', // Se usar outro, como Hostinger, mude para 'smtp.hostinger.com'
+    host: 'smtp.gmail.com',
+    port: 465,
+    secure: true, // true para porta 465
     auth: {
-        user: process.env.EMAIL_USER, // Ex: contato@goleadorvip.com.br
-        pass: process.env.EMAIL_PASS  // Senha do e-mail ou App Password do Google
+        user: process.env.EMAIL_USER,
+        pass: process.env.EMAIL_PASS  
+    },
+    tls: {
+        rejectUnauthorized: false // Evita bloqueios de certificado no Render
     }
 });
 
