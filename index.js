@@ -50,6 +50,91 @@ app.post("/login", async (req, res) => {
     }
 });
 
+const nodemailer = require('nodemailer');
+const crypto = require('crypto');
+
+// Configuração de envio de e-mails (Substitua pelos seus dados no .env)
+const transporter = nodemailer.createTransport({
+    service: 'gmail', // Se usar outro, como Hostinger, mude para 'smtp.hostinger.com'
+    auth: {
+        user: process.env.EMAIL_USER, // Ex: contato@goleadorvip.com.br
+        pass: process.env.EMAIL_PASS  // Senha do e-mail ou App Password do Google
+    }
+});
+
+// Endpoint 1: Solicitar link de recuperação
+app.post("/esqueci-senha", async (req, res) => {
+    const { email } = req.body;
+    try {
+        const user = await pool.query(`SELECT id, nome FROM users WHERE email = $1`, [email]);
+        if (user.rows.length === 0) {
+            // Retornamos 200 mesmo se não achar, por segurança (evita vazamento de dados de quais e-mails existem)
+            return res.status(200).json({ mensagem: "Se o e-mail existir, um link de recuperação foi enviado." });
+        }
+
+        const token = crypto.randomBytes(32).toString('hex');
+        const expira = new Date();
+        expira.setHours(expira.getHours() + 1); // Expira em 1 hora
+
+        await pool.query(`UPDATE users SET reset_token = $1, reset_token_expires = $2 WHERE id = $3`, [token, expira, user.rows[0].id]);
+
+        const link = `${process.env.FRONTEND_URL || 'http://localhost:3000'}/public/resetar-senha?token=${token}`;
+
+        await transporter.sendMail({
+            from: `"Goleador VIP" <${process.env.EMAIL_USER}>`,
+            to: email,
+            subject: "Recuperação de Senha - Goleador VIP",
+            html: `
+                <h3>Olá, ${user.rows[0].nome}!</h3>
+                <p>Você solicitou a recuperação da sua senha. Clique no link abaixo para criar uma nova:</p>
+                <a href="${link}" style="display:inline-block; padding:10px 20px; background:#10b981; color:#fff; text-decoration:none; border-radius:5px;">Redefinir Minha Senha</a>
+                <p>Ou cole este link no navegador: <br> ${link}</p>
+                <p><em>Este link expira em 1 hora. Se não foi você, ignore este e-mail.</em></p>
+            `
+        });
+
+        res.status(200).json({ mensagem: "E-mail de recuperação enviado com sucesso!" });
+    } catch (err) {
+        console.error(err);
+        res.status(500).json({ erro: "Erro ao enviar e-mail de recuperação." });
+    }
+});
+
+// Endpoint 2: Validar token e salvar nova senha (veio do e-mail)
+app.post("/redefinir-senha-token", async (req, res) => {
+    const { token, novaSenha } = req.body;
+    try {
+        const user = await pool.query(`SELECT id FROM users WHERE reset_token = $1 AND reset_token_expires > NOW()`, [token]);
+        if (user.rows.length === 0) return res.status(400).json({ erro: "Token inválido ou expirado." });
+
+        const senhaCriptografada = await bcrypt.hash(novaSenha, 10);
+        await pool.query(`UPDATE users SET senha = $1, reset_token = NULL, reset_token_expires = NULL WHERE id = $2`, [senhaCriptografada, user.rows[0].id]);
+
+        res.status(200).json({ mensagem: "Senha redefinida com sucesso!" });
+    } catch (err) {
+        res.status(500).json({ erro: "Erro interno ao redefinir senha." });
+    }
+});
+
+// Endpoint 3: Alterar senha logado (Página de Perfil)
+app.put("/alterar-senha", async (req, res) => {
+    const { usuario_id, senhaAtual, novaSenha } = req.body;
+    try {
+        const user = await pool.query(`SELECT senha FROM users WHERE id = $1`, [usuario_id]);
+        if (user.rows.length === 0) return res.status(404).json({ erro: "Usuário não encontrado." });
+
+        const senhaValida = await bcrypt.compare(senhaAtual, user.rows[0].senha);
+        if (!senhaValida) return res.status(401).json({ erro: "A senha atual está incorreta." });
+
+        const senhaCriptografada = await bcrypt.hash(novaSenha, 10);
+        await pool.query(`UPDATE users SET senha = $1 WHERE id = $2`, [senhaCriptografada, usuario_id]);
+
+        res.status(200).json({ mensagem: "Sua senha foi alterada com sucesso!" });
+    } catch (err) {
+        res.status(500).json({ erro: "Erro ao alterar a senha." });
+    }
+});
+
 app.put("/resetar-senha", async (req, res) => {
     const { email, cpf, novaSenha } = req.body;
     try {
