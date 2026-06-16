@@ -941,3 +941,102 @@ app.put('/admin/definir-campeao', async (req, res) => {
 app.listen(PORT, () => {
     console.log(`Servidor rodando na porta ${PORT}`);
 });
+
+// ==========================================
+// 7. SISTEMA DE NOTIFICAÇÕES (AVISOS)
+// ==========================================
+
+// Rota para o Admin listar os usuários no Dropdown
+app.get("/admin/usuarios", async (req, res) => {
+    try {
+        const result = await pool.query(`SELECT id, nome, email FROM users ORDER BY nome ASC`);
+        res.status(200).json(result.rows);
+    } catch (err) {
+        res.status(500).json({ erro: err.message });
+    }
+});
+
+// ADMIN: Criar nova notificação (Agora aceita usuário alvo)
+app.post("/admin/notificacoes", async (req, res) => {
+    const { titulo, mensagem, usuario_alvo_id } = req.body;
+    const alvo = usuario_alvo_id === 'todos' ? null : usuario_alvo_id; // Se for 'todos', fica null (vai pra geral)
+    try {
+        await pool.query(
+            `INSERT INTO notificacoes (titulo, mensagem, usuario_alvo_id) VALUES ($1, $2, $3)`,
+            [titulo, mensagem, alvo]
+        );
+        res.status(201).json({ mensagem: "Aviso criado com sucesso!" });
+    } catch (err) {
+        res.status(500).json({ erro: err.message });
+    }
+});
+
+// ADMIN: Listar todas as notificações
+app.get("/admin/notificacoes", async (req, res) => {
+    try {
+        const result = await pool.query(`
+            SELECT n.*, u.nome as alvo_nome 
+            FROM notificacoes n 
+            LEFT JOIN users u ON n.usuario_alvo_id = u.id 
+            ORDER BY n.id DESC
+        `);
+        res.status(200).json(result.rows);
+    } catch (err) {
+        res.status(500).json({ erro: err.message });
+    }
+});
+
+// ADMIN: Ligar/Desligar notificação
+app.put("/admin/notificacoes/:id/status", async (req, res) => {
+    const { ativa } = req.body;
+    try {
+        await pool.query(`UPDATE notificacoes SET ativa = $1 WHERE id = $2`, [ativa, req.params.id]);
+        res.status(200).json({ mensagem: "Status atualizado!" });
+    } catch (err) {
+        res.status(500).json({ erro: err.message });
+    }
+});
+
+// ADMIN: Excluir Notificação Definitivamente
+app.delete("/admin/notificacoes/:id", async (req, res) => {
+    try {
+        await pool.query(`DELETE FROM notificacoes WHERE id = $1`, [req.params.id]);
+        res.status(200).json({ mensagem: "Aviso excluído permanentemente!" });
+    } catch (err) {
+        res.status(500).json({ erro: err.message });
+    }
+});
+
+// USUÁRIO: Buscar notificações que ele ainda NÃO leu (Agora filtra pelo usuário alvo)
+app.get("/notificacoes/nao-lidas/:usuario_id", async (req, res) => {
+    try {
+        const query = `
+            SELECT n.* FROM notificacoes n
+            WHERE n.ativa = true 
+            AND (n.usuario_alvo_id IS NULL OR n.usuario_alvo_id = $1)
+            AND NOT EXISTS (
+                SELECT 1 FROM notificacoes_lidas nl 
+                WHERE nl.notificacao_id = n.id AND nl.usuario_id = $1
+            )
+            ORDER BY n.id ASC
+        `;
+        const result = await pool.query(query, [req.params.usuario_id]);
+        res.status(200).json(result.rows);
+    } catch (err) {
+        res.status(500).json({ erro: err.message });
+    }
+});
+
+// USUÁRIO: Marcar notificação como lida
+app.post("/notificacoes/marcar-lida", async (req, res) => {
+    const { usuario_id, notificacao_id } = req.body;
+    try {
+        await pool.query(
+            `INSERT INTO notificacoes_lidas (usuario_id, notificacao_id) VALUES ($1, $2) ON CONFLICT DO NOTHING`,
+            [usuario_id, notificacao_id]
+        );
+        res.status(200).json({ mensagem: "Marcada como lida!" });
+    } catch (err) {
+        res.status(500).json({ erro: err.message });
+    }
+});
